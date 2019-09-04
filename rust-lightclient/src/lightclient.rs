@@ -3,12 +3,11 @@ use crate::lightwallet::LightWallet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+use std::error::Error;
 use std::io::prelude::*;
 use std::fs::File;
 
-
 use zcash_primitives::transaction::{TxId, Transaction};
-
 
 use futures::Future;
 use hyper::client::connect::{Destination, HttpConnector};
@@ -18,6 +17,9 @@ use tower_util::MakeService;
 use futures::stream::Stream;
 
 use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction, TxFilter};
+use crate::grpc_client::client::CompactTxStreamer;
+
+type Client = crate::grpc_client::client::CompactTxStreamer<tower_request_modifier::RequestModifier<tower_hyper::client::Connection<tower_grpc::BoxBody>, tower_grpc::BoxBody>>;
 
 pub struct LightClient {
     pub wallet          : Arc<LightWallet>,
@@ -67,14 +69,11 @@ impl LightClient {
 
             let simple_callback = move |encoded_block: &[u8]| {
                 local_light_wallet.scan_block(encoded_block);
-                let height = local_light_wallet.last_scanned_height();
                 local_bytes_downloaded.fetch_add(encoded_block.len(), Ordering::SeqCst);
-
-                if height % 100 == 0 {
-                    print!("Syncing {}/{}, Balance = {}           \r", 
-                        height, last_block, local_light_wallet.balance());
-                }
             };
+
+            print!("Syncing {}/{}, Balance = {}           \r", 
+                last_scanned_height, last_block, self.wallet.balance());
 
             self.read_blocks(last_scanned_height, end_height, simple_callback);
 
@@ -124,28 +123,10 @@ impl LightClient {
 
 
     pub fn read_full_tx<F : 'static + std::marker::Send>(&self, txid: TxId, c: F)
-        where F : Fn(&[u8]) {
+            where F : Fn(&[u8]) {
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
 
-        let dst = Destination::try_from_uri(uri.clone()).unwrap();
-        let connector = util::Connector::new(HttpConnector::new(4));
-        let settings = client::Builder::new().http2_only(true).clone();
-        let mut make_client = client::Connect::with_builder(connector, settings);
-
-        let say_hello = make_client
-            .make_service(dst)
-            .map_err(|e| panic!("connect error: {:?}", e))
-            .and_then(move |conn| {
-                use crate::grpc_client::client::CompactTxStreamer;
-
-                let conn = tower_request_modifier::Builder::new()
-                    .set_origin(uri)
-                    .build(conn)
-                    .unwrap();
-
-                // Wait until the client is ready...
-                CompactTxStreamer::new(conn).ready()
-            })
+        let say_hello = self.make_grpc_client(uri).unwrap()
             .and_then(move |mut client| {
                 let txfilter = TxFilter { block: None, index: 0, hash: txid.0.to_vec() };
                 client.get_transaction(Request::new(txfilter))
@@ -166,25 +147,7 @@ impl LightClient {
     pub fn broadcast_raw_tx(&self, tx_bytes: Box<[u8]>) {
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
 
-        let dst = Destination::try_from_uri(uri.clone()).unwrap();
-        let connector = util::Connector::new(HttpConnector::new(4));
-        let settings = client::Builder::new().http2_only(true).clone();
-        let mut make_client = client::Connect::with_builder(connector, settings);
-
-        let say_hello = make_client
-            .make_service(dst)
-            .map_err(|e| panic!("connect error: {:?}", e))
-            .and_then(move |conn| {
-                use crate::grpc_client::client::CompactTxStreamer;
-
-                let conn = tower_request_modifier::Builder::new()
-                    .set_origin(uri)
-                    .build(conn)
-                    .unwrap();
-
-                // Wait until the client is ready...
-                CompactTxStreamer::new(conn).ready()
-            })
+        let say_hello = self.make_grpc_client(uri).unwrap()
             .and_then(move |mut client| {
                 client.send_transaction(Request::new(RawTransaction {data: tx_bytes.to_vec()}))
             })
@@ -213,7 +176,6 @@ impl LightClient {
             .make_service(dst)
             .map_err(|e| panic!("connect error: {:?}", e))
             .and_then(move |conn| {
-                use crate::grpc_client::client::CompactTxStreamer;
 
                 let conn = tower_request_modifier::Builder::new()
                     .set_origin(uri)
@@ -257,25 +219,7 @@ impl LightClient {
         where F : FnMut(BlockId) {
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
 
-        let dst = Destination::try_from_uri(uri.clone()).unwrap();
-        let connector = util::Connector::new(HttpConnector::new(4));
-        let settings = client::Builder::new().http2_only(true).clone();
-        let mut make_client = client::Connect::with_builder(connector, settings);
-
-        let say_hello = make_client
-            .make_service(dst)
-            .map_err(|e| panic!("connect error: {:?}", e))
-            .and_then(move |conn| {
-                use crate::grpc_client::client::CompactTxStreamer;
-
-                let conn = tower_request_modifier::Builder::new()
-                    .set_origin(uri)
-                    .build(conn)
-                    .unwrap();
-
-                // Wait until the client is ready...
-                CompactTxStreamer::new(conn).ready()
-            })
+        let say_hello = self.make_grpc_client(uri).unwrap()
             .and_then(|mut client| {
                 client.get_latest_block(Request::new(ChainSpec {}))
             })
@@ -288,5 +232,27 @@ impl LightClient {
             });
 
         tokio::run(say_hello);
+    }
+    
+    fn make_grpc_client(&self, uri: http::Uri) -> Result<Box<dyn Future<Item=Client, Error=tower_grpc::Status> + Send>, Box<dyn Error>> {
+        let dst = Destination::try_from_uri(uri.clone())?;
+        let connector = util::Connector::new(HttpConnector::new(4));
+        let settings = client::Builder::new().http2_only(true).clone();
+        let mut make_client = client::Connect::with_builder(connector, settings);
+
+        let say_hello = make_client
+            .make_service(dst)
+            .map_err(|e| panic!("connect error: {:?}", e))
+            .and_then(move |conn| {
+
+                let conn = tower_request_modifier::Builder::new()
+                    .set_origin(uri)
+                    .build(conn)
+                    .unwrap();
+
+                // Wait until the client is ready...
+                CompactTxStreamer::new(conn).ready()
+            });
+        Ok(Box::new(say_hello))
     }
 }
