@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use pairing::bls12_381::Bls12;
-use sapling_crypto::primitives::{Diversifier, Note, PaymentAddress};
+use zcash_primitives::primitives::{Diversifier, Note, PaymentAddress};
 use std::cmp;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -15,9 +15,9 @@ use zcash_primitives::{
     merkle_tree::{CommitmentTree, IncrementalWitness},
     sapling::Node,
     transaction::{
-        builder::{Builder, DEFAULT_FEE},
-        components::Amount,
-        TxId,
+        builder::{Builder},
+        components::Amount, components::amount::DEFAULT_FEE,
+        TxId, Transaction, TransactionData
     },
     zip32::{ExtendedFullViewingKey, ExtendedSpendingKey},
     JUBJUB,
@@ -64,9 +64,9 @@ struct SaplingNoteData {
 impl SaplingNoteData {
     fn new(
         extfvk: &ExtendedFullViewingKey,
-        output: zcash_client_backend::wallet::WalletShieldedOutput,
-        witness: IncrementalWitness<Node>,
+        output: zcash_client_backend::wallet::WalletShieldedOutput
     ) -> Self {
+        let witness = output.witness;
         let nf = {
             let mut nf = [0; 32];
             nf.copy_from_slice(
@@ -344,7 +344,7 @@ impl Client {
             )
         };
 
-        for (tx, new_witnesses) in new_txs {
+        for tx in new_txs {
             // Mark notes as spent.
             for spend in &tx.shielded_spends {
                 let txid = nfs
@@ -373,15 +373,13 @@ impl Client {
             let tx_entry = txs.get_mut(&tx.txid).unwrap();
 
             // Save notes.
-            for (output, witness) in tx
+            for output in tx
                 .shielded_outputs
                 .into_iter()
-                .zip(new_witnesses.into_iter())
             {
                 tx_entry.notes.push(SaplingNoteData::new(
                     &self.extfvks[output.account],
-                    output,
-                    witness,
+                    output
                 ));
             }
         }
@@ -418,7 +416,7 @@ impl Client {
                 return None;
             }
         };
-        let value = Amount(value as i64);
+        let value = Amount::from_i64(value as i64).unwrap();
 
         // Target the next block, assuming we are up-to-date.
         let (height, anchor_offset) = match self.get_target_height_and_anchor_offset() {
@@ -429,9 +427,11 @@ impl Client {
             }
         };
 
+        use std::convert::From;
+
         // Select notes to cover the target value
         println!("{}: Selecting notes", now() - start_time);
-        let target_value = value.0 + DEFAULT_FEE.0;
+        let target_value = value + DEFAULT_FEE ;
         let notes: Vec<_> = self
             .txs
             .read()
@@ -442,7 +442,7 @@ impl Client {
             .filter_map(|(txid, note)| SpendableNote::from(txid, note, anchor_offset))
             .scan(0, |running_total, spendable| {
                 let value = spendable.note.value;
-                let ret = if *running_total < target_value as u64 {
+                let ret = if *running_total < u64::from(target_value) {
                     Some(spendable)
                 } else {
                     None
@@ -457,9 +457,9 @@ impl Client {
             .iter()
             .map(|selected| selected.note.value)
             .sum::<u64>();
-        if selected_value < target_value as u64 {
+        if selected_value < u64::from(target_value) {
             eprintln!(
-                "Insufficient funds (have {}, need {})",
+                "Insufficient funds (have {}, need {:?})",
                 selected_value, target_value
             );
             return None;

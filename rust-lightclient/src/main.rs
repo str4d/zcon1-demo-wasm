@@ -87,7 +87,7 @@ pub fn do_sync() {
         let simple_callback = move |encoded_block: &[u8]| {
             local_lightclient.scan_block(encoded_block);
             
-            print!("Block Height: {}, Balance = {}\r", local_lightclient.last_scanned_height(), local_lightclient.balance());
+            print!("Block Height: {}, Balance = {}           \r", local_lightclient.last_scanned_height(), local_lightclient.balance());
         };
 
         read_blocks(last_scanned_height, end_height, simple_callback);

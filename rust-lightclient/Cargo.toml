@@ -24,32 +24,27 @@ rustyline = "5.0.2"
 
 [dependencies.bellman]
 git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
+branch = "note-spending-v6"
 default-features = false
 features = ["groth16"]
 
 [dependencies.pairing]
 git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
-
-[dependencies.sapling-crypto]
-git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
-default-features = false
+branch = "note-spending-v6"
 
 [dependencies.zcash_client_backend]
 git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
+branch = "note-spending-v6"
 default-features = false
 
 [dependencies.zcash_primitives]
 git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
+branch = "note-spending-v6"
 default-features = false
 
 [dependencies.zcash_proofs]
 git = "https://github.com/str4d/librustzcash.git"
-branch = "demo-wasm"
+branch = "note-spending-v6"
 default-features = false
 
 
