@@ -120,7 +120,7 @@ impl SpendableNote {
     }
 }
 
-pub struct Client {
+pub struct LightWallet {
     extsks: [ExtendedSpendingKey; 1],
     extfvks: [ExtendedFullViewingKey; 1],
     address: PaymentAddress<Bls12>,
@@ -128,15 +128,14 @@ pub struct Client {
     txs: Arc<RwLock<HashMap<TxId, WalletTx>>>,
 }
 
-/// Public methods, exported to JavaScript.
-impl Client {
+impl LightWallet {
     pub fn new() -> Self {
 
         let extsk = ExtendedSpendingKey::master(&[1; 32]);  // New key
         let extfvk = ExtendedFullViewingKey::from(&extsk);
         let address = extfvk.default_address().unwrap().1;
 
-        Client {
+        LightWallet {
             extsks: [extsk],
             extfvks: [extfvk],
             address,
@@ -317,7 +316,8 @@ impl Client {
             for nd in tx.notes.iter_mut() {
                 // Duplicate the most recent witness
                 if let Some(witness) = nd.witnesses.last() {
-                    nd.witnesses.push(witness.clone());
+                    let clone = witness.clone();
+                    nd.witnesses.push(clone);
                 }
                 // Trim the oldest witnesses
                 nd.witnesses = nd
