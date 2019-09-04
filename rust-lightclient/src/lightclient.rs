@@ -131,7 +131,7 @@ pub struct Client {
 impl Client {
     pub fn new() -> Self {
 
-        let extsk = ExtendedSpendingKey::master(&[0; 32]);
+        let extsk = ExtendedSpendingKey::master(&[1; 32]);  // New key
         let extfvk = ExtendedFullViewingKey::from(&extsk);
         let address = extfvk.default_address().unwrap().1;
 
@@ -396,7 +396,7 @@ impl Client {
         spend_params: &[u8],
         output_params: &[u8],
         to: &str,
-        value: u32,
+        value: u64,
     ) -> Option<Box<[u8]>> {
         let start_time = now();
         println!(
@@ -416,7 +416,7 @@ impl Client {
                 return None;
             }
         };
-        let value = Amount::from_i64(value as i64).unwrap();
+        let value = Amount::from_u64(value).unwrap();
 
         // Target the next block, assuming we are up-to-date.
         let (height, anchor_offset) = match self.get_target_height_and_anchor_offset() {
@@ -426,8 +426,6 @@ impl Client {
                 return None;
             }
         };
-
-        use std::convert::From;
 
         // Select notes to cover the target value
         println!("{}: Selecting notes", now() - start_time);

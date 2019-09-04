@@ -9,6 +9,8 @@ use futures::stream::Stream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use std::io::prelude::*;
+use std::fs::File;
 
 mod lightclient;
 mod address;
@@ -17,7 +19,7 @@ mod prover;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use crate::grpc_client::{ChainSpec, BlockId, BlockRange};
+use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction};
 
 pub mod grpc_client {
     include!(concat!(env!("OUT_DIR"), "/cash.z.wallet.sdk.rpc.rs"));
@@ -57,8 +59,13 @@ pub fn main() {
 
 pub fn do_user_command(cmd: String) {
     match cmd.as_ref() {
-        "sync"    => { do_sync() }
-        _          => { println!("Unknown command {}", cmd); }
+        "sync"    => { 
+                        do_sync();
+                    }
+        "address" => {
+                        
+                    }                    
+        _         => { println!("Unknown command {}", cmd); }
     }
 }
 
@@ -101,6 +108,69 @@ pub fn do_sync() {
             end_height = last_block;
         }        
     }    
+
+    println!("Address: {}", lightclient.address());
+    println!("Balance: {}", lightclient.balance());
+
+    // After syncing, send the balance to someone
+    let mut f = File::open("/home/adityapk/.zcash-params/sapling-output.params").unwrap();
+    let mut output_params = vec![];
+    // read the whole file
+    f.read_to_end(&mut output_params).unwrap();
+
+    let mut f = File::open("/home/adityapk/.zcash-params/sapling-spend.params").unwrap();
+    let mut spend_params = vec![];
+    // read the whole file
+    f.read_to_end(&mut spend_params).unwrap();
+
+    let rawtx = lightclient.send_to_address(
+        u32::from_str_radix("2bb40e60", 16).unwrap(),
+        &spend_params,
+        &output_params,
+        "ztestsapling1x65nq4dgp0qfywgxcwk9n0fvm4fysmapgr2q00p85ju252h6l7mmxu2jg9cqqhtvzd69jwhgv8d",
+        10000000
+    );
+
+    match rawtx {
+        Some(txbytes)   => broadcast_raw_tx(txbytes),
+        None            => eprintln!("No Tx to broadcast")
+    };
+}
+
+pub fn broadcast_raw_tx(tx_bytes: Box<[u8]>) {
+    let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
+
+    let dst = Destination::try_from_uri(uri.clone()).unwrap();
+    let connector = util::Connector::new(HttpConnector::new(4));
+    let settings = client::Builder::new().http2_only(true).clone();
+    let mut make_client = client::Connect::with_builder(connector, settings);
+
+    let say_hello = make_client
+        .make_service(dst)
+        .map_err(|e| panic!("connect error: {:?}", e))
+        .and_then(move |conn| {
+            use crate::grpc_client::client::CompactTxStreamer;
+
+            let conn = tower_request_modifier::Builder::new()
+                .set_origin(uri)
+                .build(conn)
+                .unwrap();
+
+            // Wait until the client is ready...
+            CompactTxStreamer::new(conn).ready()
+        })
+        .and_then(move |mut client| {
+            client.send_transaction(Request::new(RawTransaction {data: tx_bytes.to_vec()}))
+        })
+        .and_then(move |response| {
+            println!("{:?}", response.into_inner());
+            Ok(())
+        })
+        .map_err(|e| {
+            println!("ERR = {:?}", e);
+        });
+
+    tokio::run(say_hello);
 }
 
 pub fn read_blocks<F : 'static + std::marker::Send>(start_height: u64, end_height: u64, c: F)
@@ -181,7 +251,6 @@ pub fn get_latest_block<F : 'static + std::marker::Send>(mut c : F)
             CompactTxStreamer::new(conn).ready()
         })
         .and_then(|mut client| {
-
             client.get_latest_block(Request::new(ChainSpec {}))
         })
         .and_then(move |response| {
