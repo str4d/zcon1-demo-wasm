@@ -128,7 +128,8 @@ pub fn do_sync() {
         &spend_params,
         &output_params,
         "ztestsapling1x65nq4dgp0qfywgxcwk9n0fvm4fysmapgr2q00p85ju252h6l7mmxu2jg9cqqhtvzd69jwhgv8d",
-        10000000
+        10000000,
+        Some("outgoing memo added to note".to_string())
     );
 
     match rawtx {

@@ -19,6 +19,7 @@ use zcash_primitives::{
         components::Amount, components::amount::DEFAULT_FEE,
         TxId, Transaction, TransactionData
     },
+    note_encryption::Memo,
     zip32::{ExtendedFullViewingKey, ExtendedSpendingKey},
     JUBJUB,
 };
@@ -397,6 +398,7 @@ impl Client {
         output_params: &[u8],
         to: &str,
         value: u64,
+        memo: Option<String>,
     ) -> Option<Box<[u8]>> {
         let start_time = now();
         println!(
@@ -477,10 +479,14 @@ impl Client {
                 return None;
             }
         }
+
+        // Compute memo if it exists
+        let encoded_memo = memo.map(|s| Memo::from_str(&s).unwrap() );
+
         println!("{}: Adding output", now() - start_time);
         if let Err(e) = match to {
             address::RecipientAddress::Shielded(to) => {
-                builder.add_sapling_output(ovk, to.clone(), value, None)
+                builder.add_sapling_output(ovk, to.clone(), value, encoded_memo)
             }
             address::RecipientAddress::Transparent(to) => {
                 builder.add_transparent_output(&to, value)
