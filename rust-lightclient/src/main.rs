@@ -1,29 +1,12 @@
-
-use futures::Future;
-use hyper::client::connect::{Destination, HttpConnector};
-use tower_grpc::Request;
-use tower_hyper::{client, util};
-use tower_util::MakeService;
-use futures::stream::Stream;
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use std::io::prelude::*;
-use std::fs::File;
-
+mod lightclient;
 mod lightwallet;
 mod address;
 mod prover;
 
-use lightwallet::LightWallet;
-
-use zcash_primitives::transaction::{TxId, Transaction};
+use lightclient::LightClient;
 
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
-
-use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction, TxFilter};
 
 pub mod grpc_client {
     include!(concat!(env!("OUT_DIR"), "/cash.z.wallet.sdk.rpc.rs"));
@@ -32,6 +15,8 @@ pub mod grpc_client {
 
 
 pub fn main() {
+    let light_client = LightClient::new();
+
     // `()` can be used when no completer is required
     let mut rl = Editor::<()>::new();
     if rl.load_history("history.txt").is_err() {
@@ -42,7 +27,7 @@ pub fn main() {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                do_user_command(line);
+                do_user_command(line, &light_client);
             },
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
@@ -61,266 +46,14 @@ pub fn main() {
     rl.save_history("history.txt").unwrap();
 }
 
-pub fn do_user_command(cmd: String) {
+pub fn do_user_command(cmd: String, light_client: &LightClient) {
     match cmd.as_ref() {
         "sync"    => { 
-                        do_sync();
+                        light_client.do_sync();
                     }
         "address" => {
                         
                     }                    
         _         => { println!("Unknown command {}", cmd); }
     }
-}
-
-pub fn do_sync() {
-    let light_wallet = Arc::new(LightWallet::new());
-    light_wallet.set_initial_block(500000,
-                            "004fada8d4dbc5e80b13522d2c6bd0116113c9b7197f0c6be69bc7a62f2824cd",
-                            "01b733e839b5f844287a6a491409a991ec70277f39a50c99163ed378d23a829a0700100001916db36dfb9a0cf26115ed050b264546c0fa23459433c31fd72f63d188202f2400011f5f4e3bd18da479f48d674dbab64454f6995b113fa21c9d8853a9e764fb3e1f01df9d2c233ca60360e3c2bb73caf5839a1be634c8b99aea22d02abda2e747d9100001970d41722c078288101acd0a75612acfb4c434f2a55aab09fb4e812accc2ba7301485150f0deac7774dcd0fe32043bde9ba2b6bbfff787ad074339af68e88ee70101601324f1421e00a43ef57f197faf385ee4cac65aab58048016ecbd94e022973701e1b17f4bd9d1b6ca1107f619ac6d27b53dd3350d5be09b08935923cbed97906c0000000000011f8322ef806eb2430dc4a7a41c1b344bea5be946efc7b4349c1c9edb14ff9d39");
-
-    let mut last_scanned_height = light_wallet.last_scanned_height() as u64;
-    let mut end_height = last_scanned_height + 1000;
-
-    let latest_block_height = Arc::new(AtomicU64::new(0));
-
-    let latest_block_height_clone = latest_block_height.clone();
-    let latest_block = move |block: BlockId| {
-        latest_block_height_clone.store(block.height, Ordering::SeqCst);
-    };
-    get_latest_block(latest_block);
-    let last_block = latest_block_height.load(Ordering::SeqCst);
-    println!("Latest block = {}", last_block);
-
-    loop {
-        let local_light_wallet = light_wallet.clone();
-
-        let simple_callback = move |encoded_block: &[u8]| {
-            local_light_wallet.scan_block(encoded_block);
-            
-            print!("Block Height: {}, Balance = {}           \r", local_light_wallet.last_scanned_height(), local_light_wallet.balance());
-        };
-
-        read_blocks(last_scanned_height, end_height, simple_callback);
-
-        last_scanned_height = end_height + 1;
-        end_height = last_scanned_height + 1000 - 1;
-
-        if last_scanned_height > last_block {
-            break;
-        } else if end_height > last_block {
-            end_height = last_block;
-        }        
-    }    
-
-    println!("Address: {}", light_wallet.address());
-    println!("Balance: {}", light_wallet.balance());
-
-    // After syncing, send the balance to someone
-    let mut f = File::open("/home/adityapk/.zcash-params/sapling-output.params").unwrap();
-    let mut output_params = vec![];
-    // read the whole file
-    f.read_to_end(&mut output_params).unwrap();
-
-    let mut f = File::open("/home/adityapk/.zcash-params/sapling-spend.params").unwrap();
-    let mut spend_params = vec![];
-    // read the whole file
-    f.read_to_end(&mut spend_params).unwrap();
-
-    /*
-    let rawtx = light_wallet.send_to_address(
-        u32::from_str_radix("2bb40e60", 16).unwrap(),
-        &spend_params,
-        &output_params,
-        "ztestsapling1x65nq4dgp0qfywgxcwk9n0fvm4fysmapgr2q00p85ju252h6l7mmxu2jg9cqqhtvzd69jwhgv8d",
-        10000000,
-        Some("outgoing memo added to note".to_string())
-    );
-
-    
-    match rawtx {
-        Some(txbytes)   => broadcast_raw_tx(txbytes),
-        None            => eprintln!("No Tx to broadcast")
-    };
-    */
-
-    // Get the Raw transaction for all the wallet transactions
-    
-    for txid in light_wallet.txs.read().unwrap().keys() {
-        let light_wallet_clone = light_wallet.clone();
-        println!("Scanning txid {:?}", txid);
-
-        read_full_tx(*txid, move |tx_bytes: &[u8] | {
-            let tx = Transaction::read(tx_bytes).unwrap();
-
-            light_wallet_clone.scan_full_tx(&tx);
-        });
-    };
-}
-
-pub fn read_full_tx<F : 'static + std::marker::Send>(txid: TxId, c: F)
-    where F : Fn(&[u8]) {
-     let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-    let dst = Destination::try_from_uri(uri.clone()).unwrap();
-    let connector = util::Connector::new(HttpConnector::new(4));
-    let settings = client::Builder::new().http2_only(true).clone();
-    let mut make_client = client::Connect::with_builder(connector, settings);
-
-    let say_hello = make_client
-        .make_service(dst)
-        .map_err(|e| panic!("connect error: {:?}", e))
-        .and_then(move |conn| {
-            use crate::grpc_client::client::CompactTxStreamer;
-
-            let conn = tower_request_modifier::Builder::new()
-                .set_origin(uri)
-                .build(conn)
-                .unwrap();
-
-            // Wait until the client is ready...
-            CompactTxStreamer::new(conn).ready()
-        })
-        .and_then(move |mut client| {
-            let txfilter = TxFilter { block: None, index: 0, hash: txid.0.to_vec() };
-            client.get_transaction(Request::new(txfilter))
-        })
-        .and_then(move |response| {
-            //let tx = Transaction::read(&response.into_inner().data[..]).unwrap();
-            c(&response.into_inner().data);
-
-            Ok(())
-        })
-        .map_err(|e| {
-            println!("ERR = {:?}", e);
-        });
-
-    tokio::run(say_hello);
-}
-
-pub fn broadcast_raw_tx(tx_bytes: Box<[u8]>) {
-    let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-    let dst = Destination::try_from_uri(uri.clone()).unwrap();
-    let connector = util::Connector::new(HttpConnector::new(4));
-    let settings = client::Builder::new().http2_only(true).clone();
-    let mut make_client = client::Connect::with_builder(connector, settings);
-
-    let say_hello = make_client
-        .make_service(dst)
-        .map_err(|e| panic!("connect error: {:?}", e))
-        .and_then(move |conn| {
-            use crate::grpc_client::client::CompactTxStreamer;
-
-            let conn = tower_request_modifier::Builder::new()
-                .set_origin(uri)
-                .build(conn)
-                .unwrap();
-
-            // Wait until the client is ready...
-            CompactTxStreamer::new(conn).ready()
-        })
-        .and_then(move |mut client| {
-            client.send_transaction(Request::new(RawTransaction {data: tx_bytes.to_vec()}))
-        })
-        .and_then(move |response| {
-            println!("{:?}", response.into_inner());
-            Ok(())
-        })
-        .map_err(|e| {
-            println!("ERR = {:?}", e);
-        });
-
-    tokio::run(say_hello);
-}
-
-pub fn read_blocks<F : 'static + std::marker::Send>(start_height: u64, end_height: u64, c: F)
-    where F : Fn(&[u8]) {
-    // Fetch blocks
-    let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-    let dst = Destination::try_from_uri(uri.clone()).unwrap();
-    let connector = util::Connector::new(HttpConnector::new(4));
-    let settings = client::Builder::new().http2_only(true).clone();
-    let mut make_client = client::Connect::with_builder(connector, settings);
-
-    let say_hello = make_client
-        .make_service(dst)
-        .map_err(|e| panic!("connect error: {:?}", e))
-        .and_then(move |conn| {
-            use crate::grpc_client::client::CompactTxStreamer;
-
-            let conn = tower_request_modifier::Builder::new()
-                .set_origin(uri)
-                .build(conn)
-                .unwrap();
-
-            // Wait until the client is ready...
-            CompactTxStreamer::new(conn)
-                .ready()
-                .map_err(|e| eprintln!("streaming error {:?}", e))
-        })
-        .and_then(move |mut client| {
-            let bs = BlockId{ height: start_height, hash: vec!()};
-            let be = BlockId{ height: end_height,   hash: vec!()};
-
-            let br = Request::new(BlockRange{ start: Some(bs), end: Some(be)});
-            client
-                .get_block_range(br)
-                .map_err(|e| {
-                    eprintln!("RouteChat request failed; err={:?}", e);
-                })
-                .and_then(move |response| {
-                    let inbound = response.into_inner();
-                    inbound.for_each(move |b| {
-                        use prost::Message;
-                        let mut encoded_buf = vec![];
-
-                        b.encode(&mut encoded_buf).unwrap();
-                        c(&encoded_buf);
-
-                        Ok(())
-                    })
-                    .map_err(|e| eprintln!("gRPC inbound stream error: {:?}", e))                    
-                })
-        });
-
-    tokio::run(say_hello);
-}
-
-pub fn get_latest_block<F : 'static + std::marker::Send>(mut c : F) 
-    where F : FnMut(BlockId) {
-    let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-    let dst = Destination::try_from_uri(uri.clone()).unwrap();
-    let connector = util::Connector::new(HttpConnector::new(4));
-    let settings = client::Builder::new().http2_only(true).clone();
-    let mut make_client = client::Connect::with_builder(connector, settings);
-
-    let say_hello = make_client
-        .make_service(dst)
-        .map_err(|e| panic!("connect error: {:?}", e))
-        .and_then(move |conn| {
-            use crate::grpc_client::client::CompactTxStreamer;
-
-            let conn = tower_request_modifier::Builder::new()
-                .set_origin(uri)
-                .build(conn)
-                .unwrap();
-
-            // Wait until the client is ready...
-            CompactTxStreamer::new(conn).ready()
-        })
-        .and_then(|mut client| {
-            client.get_latest_block(Request::new(ChainSpec {}))
-        })
-        .and_then(move |response| {
-            c(response.into_inner());
-            Ok(())
-        })
-        .map_err(|e| {
-            println!("ERR = {:?}", e);
-        });
-
-    tokio::run(say_hello);
 }
