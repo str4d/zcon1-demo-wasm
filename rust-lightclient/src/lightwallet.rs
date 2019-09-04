@@ -263,11 +263,11 @@ impl LightWallet {
             let cmu = output.cmu;
             let ct  = output.enc_ciphertext;
 
-            for (account, ivk) in ivks.iter().enumerate() {
+            for (_account, ivk) in ivks.iter().enumerate() {
                 //println!("Scanning with account {:?} ivk {:?}", account, ivk);
                 let epk_prime = output.ephemeral_key.as_prime_order(&JUBJUB).unwrap();
 
-                let (note, to, memo) = match try_sapling_note_decryption(ivk, &epk_prime, &cmu, &ct) {
+                let (_note, _to, memo) = match try_sapling_note_decryption(ivk, &epk_prime, &cmu, &ct) {
                     Some(ret) => ret,
                     None => continue,
                 };

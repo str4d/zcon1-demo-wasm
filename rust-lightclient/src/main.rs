@@ -52,7 +52,7 @@ pub fn do_user_command(cmd: String, light_client: &LightClient) {
                         light_client.do_sync();
                     }
         "address" => {
-                        
+                        light_client.do_address();
                     }                    
         _         => { println!("Unknown command {}", cmd); }
     }

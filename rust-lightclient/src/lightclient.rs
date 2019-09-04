@@ -19,7 +19,9 @@ use futures::stream::Stream;
 use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction, TxFilter};
 use crate::grpc_client::client::CompactTxStreamer;
 
+// Used below to return the grpc "Client" type to calling methods
 type Client = crate::grpc_client::client::CompactTxStreamer<tower_request_modifier::RequestModifier<tower_hyper::client::Connection<tower_grpc::BoxBody>, tower_grpc::BoxBody>>;
+
 
 pub struct LightClient {
     pub wallet          : Arc<LightWallet>,
@@ -46,6 +48,11 @@ impl LightClient {
                             "01b733e839b5f844287a6a491409a991ec70277f39a50c99163ed378d23a829a0700100001916db36dfb9a0cf26115ed050b264546c0fa23459433c31fd72f63d188202f2400011f5f4e3bd18da479f48d674dbab64454f6995b113fa21c9d8853a9e764fb3e1f01df9d2c233ca60360e3c2bb73caf5839a1be634c8b99aea22d02abda2e747d9100001970d41722c078288101acd0a75612acfb4c434f2a55aab09fb4e812accc2ba7301485150f0deac7774dcd0fe32043bde9ba2b6bbfff787ad074339af68e88ee70101601324f1421e00a43ef57f197faf385ee4cac65aab58048016ecbd94e022973701e1b17f4bd9d1b6ca1107f619ac6d27b53dd3350d5be09b08935923cbed97906c0000000000011f8322ef806eb2430dc4a7a41c1b344bea5be946efc7b4349c1c9edb14ff9d39");
 
         return w;
+    }
+
+    pub fn do_address(&self) {        
+        println!("Address: {}", self.wallet.address());
+        println!("Balance: {}", self.wallet.balance());
     }
 
     pub fn do_sync(&self) {
@@ -90,11 +97,7 @@ impl LightClient {
         println!("Synced to {}, Downloaded {} kB                               \r", 
                 last_block, bytes_downloaded.load(Ordering::SeqCst) / 1024);
 
-        println!("Address: {}", self.wallet.address());
-        println!("Balance: {}", self.wallet.balance());
-
         // Get the Raw transaction for all the wallet transactions
-        
         for txid in self.wallet.txs.read().unwrap().keys() {
             let light_wallet_clone = self.wallet.clone();
             println!("Scanning txid {}", txid);
@@ -119,47 +122,6 @@ impl LightClient {
             Some(txbytes)   => self.broadcast_raw_tx(txbytes),
             None            => eprintln!("No Tx to broadcast")
         };
-    }
-
-
-    pub fn read_full_tx<F : 'static + std::marker::Send>(&self, txid: TxId, c: F)
-            where F : Fn(&[u8]) {
-        let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-        let say_hello = self.make_grpc_client(uri).unwrap()
-            .and_then(move |mut client| {
-                let txfilter = TxFilter { block: None, index: 0, hash: txid.0.to_vec() };
-                client.get_transaction(Request::new(txfilter))
-            })
-            .and_then(move |response| {
-                //let tx = Transaction::read(&response.into_inner().data[..]).unwrap();
-                c(&response.into_inner().data);
-
-                Ok(())
-            })
-            .map_err(|e| {
-                println!("ERR = {:?}", e);
-            });
-
-        tokio::run(say_hello);
-    }
-
-    pub fn broadcast_raw_tx(&self, tx_bytes: Box<[u8]>) {
-        let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
-
-        let say_hello = self.make_grpc_client(uri).unwrap()
-            .and_then(move |mut client| {
-                client.send_transaction(Request::new(RawTransaction {data: tx_bytes.to_vec()}))
-            })
-            .and_then(move |response| {
-                println!("{:?}", response.into_inner());
-                Ok(())
-            })
-            .map_err(|e| {
-                println!("ERR = {:?}", e);
-            });
-
-        tokio::run(say_hello);
     }
 
     pub fn read_blocks<F : 'static + std::marker::Send>(&self, start_height: u64, end_height: u64, c: F)
@@ -210,6 +172,47 @@ impl LightClient {
                         })
                         .map_err(|e| eprintln!("gRPC inbound stream error: {:?}", e))                    
                     })
+            });
+
+        tokio::run(say_hello);
+    }
+
+
+    pub fn read_full_tx<F : 'static + std::marker::Send>(&self, txid: TxId, c: F)
+            where F : Fn(&[u8]) {
+        let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
+
+        let say_hello = self.make_grpc_client(uri).unwrap()
+            .and_then(move |mut client| {
+                let txfilter = TxFilter { block: None, index: 0, hash: txid.0.to_vec() };
+                client.get_transaction(Request::new(txfilter))
+            })
+            .and_then(move |response| {
+                //let tx = Transaction::read(&response.into_inner().data[..]).unwrap();
+                c(&response.into_inner().data);
+
+                Ok(())
+            })
+            .map_err(|e| {
+                println!("ERR = {:?}", e);
+            });
+
+        tokio::run(say_hello);
+    }
+
+    pub fn broadcast_raw_tx(&self, tx_bytes: Box<[u8]>) {
+        let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
+
+        let say_hello = self.make_grpc_client(uri).unwrap()
+            .and_then(move |mut client| {
+                client.send_transaction(Request::new(RawTransaction {data: tx_bytes.to_vec()}))
+            })
+            .and_then(move |response| {
+                println!("{:?}", response.into_inner());
+                Ok(())
+            })
+            .map_err(|e| {
+                println!("ERR = {:?}", e);
             });
 
         tokio::run(say_hello);
