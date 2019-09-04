@@ -17,9 +17,9 @@ use zcash_primitives::{
     transaction::{
         builder::{Builder},
         components::Amount, components::amount::DEFAULT_FEE,
-        TxId, Transaction, TransactionData
+        TxId, Transaction
     },
-    note_encryption::Memo,
+    note_encryption::{Memo, try_sapling_note_decryption},
     zip32::{ExtendedFullViewingKey, ExtendedSpendingKey},
     JUBJUB,
 };
@@ -89,7 +89,7 @@ impl SaplingNoteData {
     }
 }
 
-struct WalletTx {
+pub struct WalletTx {
     block: i32,
     notes: Vec<SaplingNoteData>,
 }
@@ -125,7 +125,7 @@ pub struct LightWallet {
     extfvks: [ExtendedFullViewingKey; 1],
     address: PaymentAddress<Bls12>,
     blocks: Arc<RwLock<Vec<BlockData>>>,
-    txs: Arc<RwLock<HashMap<TxId, WalletTx>>>,
+    pub txs: Arc<RwLock<HashMap<TxId, WalletTx>>>,
 }
 
 impl LightWallet {
@@ -250,6 +250,31 @@ impl LightWallet {
                 }
             })
             .sum::<u64>()
+    }
+
+    pub fn scan_full_tx(&self, tx: &Transaction) {
+        //println!("Scaninng txid {:?}", tx.txid());
+
+        for output in tx.shielded_outputs.iter() {
+            //println!("Scaninng output {:?}", output);
+
+            let ivks: Vec<_> = self.extfvks.iter().map(|extfvk| extfvk.fvk.vk.ivk()).collect();
+
+            let cmu = output.cmu;
+            let ct  = output.enc_ciphertext;
+
+            for (account, ivk) in ivks.iter().enumerate() {
+                //println!("Scanning with account {:?} ivk {:?}", account, ivk);
+                let epk_prime = output.ephemeral_key.as_prime_order(&JUBJUB).unwrap();
+
+                let (note, to, memo) = match try_sapling_note_decryption(ivk, &epk_prime, &cmu, &ct) {
+                    Some(ret) => ret,
+                    None => continue,
+                };
+
+                println!("Memo: {:?}", memo.to_utf8());
+            }
+        }
     }
 
     pub fn scan_block(&self, block: &[u8]) -> bool {

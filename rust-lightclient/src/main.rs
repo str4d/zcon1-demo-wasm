@@ -18,10 +18,12 @@ mod prover;
 
 use lightwallet::LightWallet;
 
+use zcash_primitives::transaction::{TxId, Transaction};
+
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction};
+use crate::grpc_client::{ChainSpec, BlockId, BlockRange, RawTransaction, TxFilter};
 
 pub mod grpc_client {
     include!(concat!(env!("OUT_DIR"), "/cash.z.wallet.sdk.rpc.rs"));
@@ -125,6 +127,7 @@ pub fn do_sync() {
     // read the whole file
     f.read_to_end(&mut spend_params).unwrap();
 
+    /*
     let rawtx = light_wallet.send_to_address(
         u32::from_str_radix("2bb40e60", 16).unwrap(),
         &spend_params,
@@ -134,10 +137,65 @@ pub fn do_sync() {
         Some("outgoing memo added to note".to_string())
     );
 
+    
     match rawtx {
         Some(txbytes)   => broadcast_raw_tx(txbytes),
         None            => eprintln!("No Tx to broadcast")
     };
+    */
+
+    // Get the Raw transaction for all the wallet transactions
+    
+    for txid in light_wallet.txs.read().unwrap().keys() {
+        let light_wallet_clone = light_wallet.clone();
+        println!("Scanning txid {:?}", txid);
+
+        read_full_tx(*txid, move |tx_bytes: &[u8] | {
+            let tx = Transaction::read(tx_bytes).unwrap();
+
+            light_wallet_clone.scan_full_tx(&tx);
+        });
+    };
+}
+
+pub fn read_full_tx<F : 'static + std::marker::Send>(txid: TxId, c: F)
+    where F : Fn(&[u8]) {
+     let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
+
+    let dst = Destination::try_from_uri(uri.clone()).unwrap();
+    let connector = util::Connector::new(HttpConnector::new(4));
+    let settings = client::Builder::new().http2_only(true).clone();
+    let mut make_client = client::Connect::with_builder(connector, settings);
+
+    let say_hello = make_client
+        .make_service(dst)
+        .map_err(|e| panic!("connect error: {:?}", e))
+        .and_then(move |conn| {
+            use crate::grpc_client::client::CompactTxStreamer;
+
+            let conn = tower_request_modifier::Builder::new()
+                .set_origin(uri)
+                .build(conn)
+                .unwrap();
+
+            // Wait until the client is ready...
+            CompactTxStreamer::new(conn).ready()
+        })
+        .and_then(move |mut client| {
+            let txfilter = TxFilter { block: None, index: 0, hash: txid.0.to_vec() };
+            client.get_transaction(Request::new(txfilter))
+        })
+        .and_then(move |response| {
+            //let tx = Transaction::read(&response.into_inner().data[..]).unwrap();
+            c(&response.into_inner().data);
+
+            Ok(())
+        })
+        .map_err(|e| {
+            println!("ERR = {:?}", e);
+        });
+
+    tokio::run(say_hello);
 }
 
 pub fn broadcast_raw_tx(tx_bytes: Box<[u8]>) {
