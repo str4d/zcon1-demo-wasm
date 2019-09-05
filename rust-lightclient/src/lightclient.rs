@@ -120,8 +120,8 @@ impl LightClient {
             let txids_and_memos = self.wallet.txs.read().unwrap().iter()
                 .flat_map( |(txid, wtx)| {  // flat_map because we're collecting vector of vectors
                     wtx.notes.iter()
+                        .filter( |nd| nd.memo.is_none())                // only get if memo is None (i.e., it has not been fetched)
                         .map( |nd| (txid.clone(), nd.memo.clone()) )    // collect (txid, memo) Clone everything because we want copies, so we can release the read lock
-                        .filter( | (_, opt_memo) | opt_memo.is_none() ) // only get if memo is None (i.e., it has not been fetched)
                         .collect::<Vec<(TxId, Option<Memo>)>>()         // convert to vector
                 })
                 .collect::<Vec<(TxId, Option<Memo>)>>();
