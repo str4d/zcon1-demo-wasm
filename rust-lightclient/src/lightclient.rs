@@ -174,7 +174,7 @@ impl LightClient {
                     })
             });
 
-        tokio::run(say_hello);
+        tokio::runtime::current_thread::Runtime::new().unwrap().block_on(say_hello).unwrap();
     }
 
 
@@ -197,7 +197,7 @@ impl LightClient {
                 println!("ERR = {:?}", e);
             });
 
-        tokio::run(say_hello);
+        tokio::runtime::current_thread::Runtime::new().unwrap().block_on(say_hello).unwrap()
     }
 
     pub fn broadcast_raw_tx(&self, tx_bytes: Box<[u8]>) {
@@ -215,7 +215,7 @@ impl LightClient {
                 println!("ERR = {:?}", e);
             });
 
-        tokio::run(say_hello);
+        tokio::runtime::current_thread::Runtime::new().unwrap().block_on(say_hello).unwrap()
     }
 
     pub fn get_latest_block<F : 'static + std::marker::Send>(&self, mut c : F) 
@@ -234,7 +234,7 @@ impl LightClient {
                 println!("ERR = {:?}", e);
             });
 
-        tokio::run(say_hello);
+        tokio::runtime::current_thread::Runtime::new().unwrap().block_on(say_hello).unwrap()
     }
     
     fn make_grpc_client(&self, uri: http::Uri) -> Result<Box<dyn Future<Item=Client, Error=tower_grpc::Status> + Send>, Box<dyn Error>> {
