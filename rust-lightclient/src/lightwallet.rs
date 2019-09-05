@@ -271,7 +271,8 @@ impl LightWallet {
                 };
 
                 {
-                    // Update the WalletTx
+                    // Update the WalletTx 
+                    // Do it in a short scope because of the write lock.
                     let mut txs = self.txs.write().unwrap();
                     txs.get_mut(&tx.txid()).unwrap()
                         .notes.iter_mut()

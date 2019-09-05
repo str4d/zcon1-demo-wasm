@@ -127,20 +127,15 @@ impl LightClient {
                 .collect::<Vec<(TxId, Option<Memo>)>>();
                 
             println!("{:?}", txids_and_memos);
+            // TODO: Assert that all the memos here are None
 
             txids_to_fetch = txids_and_memos.iter()
                 .map( | (txid, _) | txid.clone() )  // We're only interested in the txids, so drop the Memo, which is None anyway
                 .collect::<Vec<TxId>>();            // and convert into Vec
         }
 
-        // Deprecated, collect the TxId s to fetch smartly.
-        // // We need to first copy over the Txids from the wallet struct, because
-        // // we need to free the read lock from here (Because we'll self.wallet.txs later)
-        // let txids: Vec<TxId> = self.wallet.txs.read().unwrap()
-        //         .keys()
-        //         .map( |txid_ref| txid_ref.clone())
-        //         .collect::<Vec<TxId>>().clone();
-        
+        // And go and fetch the txids, getting the full transaction, so we can 
+        // read the memos        
         for txid in txids_to_fetch {
             let light_wallet_clone = self.wallet.clone();
             println!("Scanning txid {}", txid);
