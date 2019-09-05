@@ -2,6 +2,7 @@ mod lightclient;
 mod lightwallet;
 mod address;
 mod prover;
+mod commands;
 
 use lightclient::LightClient;
 
@@ -27,7 +28,7 @@ pub fn main() {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                do_user_command(line, &light_client);
+                commands::do_user_command(line, &light_client);
             },
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
@@ -44,16 +45,4 @@ pub fn main() {
         }
     }
     rl.save_history("history.txt").unwrap();
-}
-
-pub fn do_user_command(cmd: String, light_client: &LightClient) {
-    match cmd.as_ref() {
-        "sync"    => { 
-                        light_client.do_sync();
-                    }
-        "address" => {
-                        light_client.do_address();
-                    }                    
-        _         => { println!("Unknown command {}", cmd); }
-    }
 }

@@ -113,7 +113,7 @@ impl LightClient {
 
         // We need to first copy over the Txids from the wallet struct, because
         // we need to free the read lock from here (Because we'll self.wallet.txs later)
-        let mut txids_to_fetch: Vec<TxId>;
+        let txids_to_fetch: Vec<TxId>;
         {
             // First, build a list of all the TxIDs and Memos that we need 
             // to fetch. 
