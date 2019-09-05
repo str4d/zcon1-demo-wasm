@@ -103,16 +103,45 @@ impl LightClient {
         println!("Synced to {}, Downloaded {} kB                               \r", 
                 last_block, bytes_downloaded.load(Ordering::SeqCst) / 1024);
 
+
         // Get the Raw transaction for all the wallet transactions
 
         // We need to first copy over the Txids from the wallet struct, because
         // we need to free the read lock from here (Because we'll self.wallet.txs later)
-        let txids: Vec<TxId> = self.wallet.txs.read().unwrap()
-                .keys()
-                .map( |txid_ref| txid_ref.clone())
-                .collect::<Vec<TxId>>().clone();
+        let mut txids_to_fetch: Vec<TxId>;
+        {
+            // First, build a list of all the TxIDs and Memos that we need 
+            // to fetch. 
+            // 1. Get all (txid, Option<Memo>)
+            // 2. Filter out all txids where the Memo is None 
+            //     (Which means that particular txid was never fetched. Remember
+            //      that when memos are fetched, if they are empty, they become 
+            //      Some(f60000...)
+            let txids_and_memos = self.wallet.txs.read().unwrap().iter()
+                .flat_map( |(txid, wtx)| {  // flat_map because we're collecting vector of vectors
+                    wtx.notes.iter()
+                        .map( |nd| (txid.clone(), nd.memo.clone()) )    // collect (txid, memo) Clone everything because we want copies, so we can release the read lock
+                        .filter( | (_, opt_memo) | opt_memo.is_none() ) // only get if memo is None (i.e., it has not been fetched)
+                        .collect::<Vec<(TxId, Option<Memo>)>>()         // convert to vector
+                })
+                .collect::<Vec<(TxId, Option<Memo>)>>();
+                
+            println!("{:?}", txids_and_memos);
+
+            txids_to_fetch = txids_and_memos.iter()
+                .map( | (txid, _) | txid.clone() )  // We're only interested in the txids, so drop the Memo, which is None anyway
+                .collect::<Vec<TxId>>();            // and convert into Vec
+        }
+
+        // Deprecated, collect the TxId s to fetch smartly.
+        // // We need to first copy over the Txids from the wallet struct, because
+        // // we need to free the read lock from here (Because we'll self.wallet.txs later)
+        // let txids: Vec<TxId> = self.wallet.txs.read().unwrap()
+        //         .keys()
+        //         .map( |txid_ref| txid_ref.clone())
+        //         .collect::<Vec<TxId>>().clone();
         
-        for txid in txids {
+        for txid in txids_to_fetch {
             let light_wallet_clone = self.wallet.clone();
             println!("Scanning txid {}", txid);
 
@@ -123,6 +152,7 @@ impl LightClient {
             });
         };
 
+        // Print all the memos for fun.
         let memos = self.wallet.txs.read().unwrap()
                     .values().flat_map(|wtx| {
                         wtx.notes.iter().map(|nd| nd.memo.clone() ).collect::<Vec<Option<Memo>>>()
