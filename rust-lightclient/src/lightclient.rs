@@ -61,6 +61,11 @@ impl LightClient {
     }
 
     pub fn do_sync(&self) {
+        // Sync is 3 parts
+        // 1. Get the latest block
+        // 2. Get all the blocks that we don't have
+        // 3. Find all new Txns that don't have the full Tx, and get them as full transactions 
+        //    and scan them, mainly to get the memos
         let mut last_scanned_height = self.wallet.last_scanned_height() as u64;
         let mut end_height = last_scanned_height + 1000;
 
