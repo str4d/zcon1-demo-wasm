@@ -8,6 +8,7 @@ use std::io::prelude::*;
 use std::fs::File;
 
 use zcash_primitives::transaction::{TxId, Transaction};
+use zcash_primitives::note_encryption::Memo;
 
 use futures::Future;
 use hyper::client::connect::{Destination, HttpConnector};
@@ -50,6 +51,10 @@ impl LightClient {
         return w;
     }
 
+    pub fn last_scanned_height(&self) -> u64 {
+        self.wallet.last_scanned_height() as u64
+    }
+
     pub fn do_address(&self) {        
         println!("Address: {}", self.wallet.address());
         println!("Balance: {}", self.wallet.balance());
@@ -59,17 +64,18 @@ impl LightClient {
         let mut last_scanned_height = self.wallet.last_scanned_height() as u64;
         let mut end_height = last_scanned_height + 1000;
 
+        // This will hold the latest block fetched from the RPC
         let latest_block_height = Arc::new(AtomicU64::new(0));
-
+        // TODO: this could be a oneshot channel
         let latest_block_height_clone = latest_block_height.clone();
-        let latest_block = move |block: BlockId| {
-            latest_block_height_clone.store(block.height, Ordering::SeqCst);
-        };
-        self.get_latest_block(latest_block);
+        self.fetch_latest_block(move |block: BlockId| {
+                latest_block_height_clone.store(block.height, Ordering::SeqCst);
+            });
         let last_block = latest_block_height.load(Ordering::SeqCst);
 
         let bytes_downloaded = Arc::new(AtomicUsize::new(0));
 
+        // Fetch CompactBlocks in increments
         loop {
             let local_light_wallet = self.wallet.clone();
             let local_bytes_downloaded = bytes_downloaded.clone();
@@ -82,7 +88,7 @@ impl LightClient {
             print!("Syncing {}/{}, Balance = {}           \r", 
                 last_scanned_height, last_block, self.wallet.balance());
 
-            self.read_blocks(last_scanned_height, end_height, simple_callback);
+            self.fetch_blocks(last_scanned_height, end_height, simple_callback);
 
             last_scanned_height = end_height + 1;
             end_height = last_scanned_height + 1000 - 1;
@@ -98,16 +104,41 @@ impl LightClient {
                 last_block, bytes_downloaded.load(Ordering::SeqCst) / 1024);
 
         // Get the Raw transaction for all the wallet transactions
-        for txid in self.wallet.txs.read().unwrap().keys() {
+
+        // We need to first copy over the Txids from the wallet struct, because
+        // we need to free the read lock from here (Because we'll self.wallet.txs later)
+        let txids: Vec<TxId> = self.wallet.txs.read().unwrap()
+                .keys()
+                .map( |txid_ref| txid_ref.clone())
+                .collect::<Vec<TxId>>().clone();
+        
+        for txid in txids {
             let light_wallet_clone = self.wallet.clone();
             println!("Scanning txid {}", txid);
 
-            self.read_full_tx(*txid, move |tx_bytes: &[u8] | {
+            self.fetch_full_tx(txid, move |tx_bytes: &[u8] | {
                 let tx = Transaction::read(tx_bytes).unwrap();
 
                 light_wallet_clone.scan_full_tx(&tx);
             });
-        }; 
+        };
+
+        let memos = self.wallet.txs.read().unwrap()
+                    .values().flat_map(|wtx| {
+                        wtx.notes.iter().map(|nd| nd.memo.clone() ).collect::<Vec<Option<Memo>>>()
+                    })
+                    .map( |m| match m {
+                        Some(memo) => {
+                            match memo.to_utf8() {
+                                Some(Ok(memo_str)) => Some(memo_str),
+                                _ => None
+                            }
+                        }
+                        _ => None
+                    })
+                    .collect::<Vec<Option<String>>>();
+
+        println!("All Wallet Txns {:?}", memos);
     }
 
     pub fn do_send(&self, addr: String, value: u64, memo: Option<String>) {
@@ -116,7 +147,6 @@ impl LightClient {
             &self.sapling_spend, &self.sapling_output,
             &addr, value, memo
         );
-
         
         match rawtx {
             Some(txbytes)   => self.broadcast_raw_tx(txbytes),
@@ -124,7 +154,7 @@ impl LightClient {
         };
     }
 
-    pub fn read_blocks<F : 'static + std::marker::Send>(&self, start_height: u64, end_height: u64, c: F)
+    pub fn fetch_blocks<F : 'static + std::marker::Send>(&self, start_height: u64, end_height: u64, c: F)
         where F : Fn(&[u8]) {
         // Fetch blocks
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
@@ -178,7 +208,7 @@ impl LightClient {
     }
 
 
-    pub fn read_full_tx<F : 'static + std::marker::Send>(&self, txid: TxId, c: F)
+    pub fn fetch_full_tx<F : 'static + std::marker::Send>(&self, txid: TxId, c: F)
             where F : Fn(&[u8]) {
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
 
@@ -218,7 +248,7 @@ impl LightClient {
         tokio::runtime::current_thread::Runtime::new().unwrap().block_on(say_hello).unwrap()
     }
 
-    pub fn get_latest_block<F : 'static + std::marker::Send>(&self, mut c : F) 
+    pub fn fetch_latest_block<F : 'static + std::marker::Send>(&self, mut c : F) 
         where F : FnMut(BlockId) {
         let uri: http::Uri = format!("http://127.0.0.1:9067").parse().unwrap();
 

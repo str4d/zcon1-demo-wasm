@@ -23,7 +23,7 @@ pub fn main() {
         println!("No previous history.");
     }
     loop {
-        let readline = rl.readline(">> ");
+        let readline = rl.readline(&format!("Block:{} (h for help) >> ", light_client.last_scanned_height()));
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());

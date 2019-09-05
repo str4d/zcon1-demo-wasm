@@ -53,13 +53,14 @@ struct BlockData {
     tree: CommitmentTree<Node>,
 }
 
-struct SaplingNoteData {
+pub struct SaplingNoteData {
     account: usize,
     diversifier: Diversifier,
     note: Note<Bls12>,
     witnesses: Vec<IncrementalWitness<Node>>,
     nullifier: [u8; 32],
     spent: Option<TxId>,
+    pub memo:  Option<Memo>
 }
 
 impl SaplingNoteData {
@@ -85,13 +86,14 @@ impl SaplingNoteData {
             witnesses: vec![witness],
             nullifier: nf,
             spent: None,
+            memo: None
         }
     }
 }
 
 pub struct WalletTx {
     block: i32,
-    notes: Vec<SaplingNoteData>,
+    pub notes: Vec<SaplingNoteData>,
 }
 
 struct SpendableNote {
@@ -253,10 +255,7 @@ impl LightWallet {
     }
 
     pub fn scan_full_tx(&self, tx: &Transaction) {
-        //println!("Scaninng txid {:?}", tx.txid());
-
         for output in tx.shielded_outputs.iter() {
-            //println!("Scaninng output {:?}", output);
 
             let ivks: Vec<_> = self.extfvks.iter().map(|extfvk| extfvk.fvk.vk.ivk()).collect();
 
@@ -264,15 +263,21 @@ impl LightWallet {
             let ct  = output.enc_ciphertext;
 
             for (_account, ivk) in ivks.iter().enumerate() {
-                //println!("Scanning with account {:?} ivk {:?}", account, ivk);
                 let epk_prime = output.ephemeral_key.as_prime_order(&JUBJUB).unwrap();
 
-                let (_note, _to, memo) = match try_sapling_note_decryption(ivk, &epk_prime, &cmu, &ct) {
+                let (note, _to, memo) = match try_sapling_note_decryption(ivk, &epk_prime, &cmu, &ct) {
                     Some(ret) => ret,
                     None => continue,
                 };
 
-                println!("Memo: {:?}", memo.to_utf8());
+                {
+                    // Update the WalletTx
+                    let mut txs = self.txs.write().unwrap();
+                    txs.get_mut(&tx.txid()).unwrap()
+                        .notes.iter_mut()
+                        .find(|nd| nd.note == note).unwrap()
+                        .memo = Some(memo);
+                }
             }
         }
     }

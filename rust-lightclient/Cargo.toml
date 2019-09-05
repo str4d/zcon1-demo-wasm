@@ -50,3 +50,6 @@ default-features = false
 
 [build-dependencies]
 tower-grpc-build = { git = "https://github.com/tower-rs/tower-grpc",  features = ["tower-hyper"]  }
+
+[profile.release]
+debug = true
