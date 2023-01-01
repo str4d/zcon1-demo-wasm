@@ -15,7 +15,7 @@
     "google-protobuf": "3.8.0",
     "grpc": "1.21.1",
     "grpc-web": "1.0.4",
-    "webpack": "4.33.0"
+    "webpack": "5.75.0"
   },
   "dependencies": {
     "zcash-client-backend-wasm": "file:../zcash-client-backend-wasm/pkg"
